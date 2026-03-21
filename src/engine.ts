@@ -218,9 +218,10 @@ export function recall(db: Database.Database, query: string, budgetTokens?: numb
     inhibitedSet.set(inh.blocked_id, inh.blocker_id);
   }
 
-  // ── Pass 1: Score all blocks (with synonym expansion) ──
+  // ── Pass 1: Score all blocks (with synonym + co-occurrence expansion) ──
   const rawTokens = tokenize(query);
-  const queryTokens = expandWithSynonyms(rawTokens);
+  const synExpanded = expandWithSynonyms(rawTokens);
+  const queryTokens = expandWithCooccurrence(synExpanded, allBlocks, 3);
   const idf = computeIDF(allBlocks);
 
   let candidates: Candidate[] = allBlocks.map(b => ({
@@ -566,5 +567,51 @@ export function expandWithSynonyms(tokens: string[]): string[] {
       for (const s of syns) expanded.add(s);
     }
   }
+  return [...expanded];
+}
+
+// ── Co-occurrence Query Expander (the "translator at the front desk") ──
+// Learns from existing blocks: if "neogate" and "port" frequently co-occur,
+// querying "neogate" should also boost blocks containing "port".
+// This is lightweight — no embeddings, just keyword co-occurrence stats.
+
+export function expandWithCooccurrence(
+  tokens: string[],
+  blocks: Array<{ keywords: string }>,
+  maxExpansions = 3
+): string[] {
+  // Build co-occurrence matrix from block keywords
+  const cooccur = new Map<string, Map<string, number>>();
+
+  for (const block of blocks) {
+    const kws = block.keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean);
+    for (let i = 0; i < kws.length; i++) {
+      for (let j = i + 1; j < kws.length; j++) {
+        const a = kws[i], b = kws[j];
+        if (!cooccur.has(a)) cooccur.set(a, new Map());
+        if (!cooccur.has(b)) cooccur.set(b, new Map());
+        cooccur.get(a)!.set(b, (cooccur.get(a)!.get(b) || 0) + 1);
+        cooccur.get(b)!.set(a, (cooccur.get(b)!.get(a) || 0) + 1);
+      }
+    }
+  }
+
+  // For each query token, find top co-occurring keywords
+  const expanded = new Set(tokens);
+  for (const t of tokens) {
+    const pairs = cooccur.get(t);
+    if (!pairs) continue;
+    // Sort by co-occurrence count, take top N
+    const sorted = [...pairs.entries()]
+      .filter(([word]) => !expanded.has(word)) // don't add duplicates
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, maxExpansions);
+    for (const [word, count] of sorted) {
+      if (count >= 3) { // minimum 3 co-occurrences to be meaningful
+        expanded.add(word);
+      }
+    }
+  }
+
   return [...expanded];
 }
