@@ -336,7 +336,9 @@ export function recall(db: Database.Database, query: string, budgetTokens?: numb
   // Minimum score to be included in results. Blocks below this are considered
   // irrelevant — the system should abstain rather than return noise.
   // Calibrated: median score on random queries is ~5-8. Real queries score 15+.
-  const MIN_RELEVANCE_SCORE = 5.0;
+  // Calibrated: random queries score 5-15, real queries score 20+.
+  // Set to 15 to filter noise while keeping genuine matches.
+  const MIN_RELEVANCE_SCORE = 15.0;
 
   const active = candidates
     .filter(c => !c.voided && c.score >= MIN_RELEVANCE_SCORE)
