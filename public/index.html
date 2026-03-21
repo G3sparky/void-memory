@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Void Memory</title>
+<style>
+  :root {
+    --bg: #06060b; --surface: #0e0e16; --surface2: #14141e; --border: #1a1a2e;
+    --text: #d0d0e0; --dim: #555570; --bright: #f0f0ff;
+    --accent: #6366f1; --accent-dim: rgba(99,102,241,0.15);
+    --active: #10b981; --active-dim: rgba(16,185,129,0.12);
+    --inhibitory: #ef4444; --inhib-dim: rgba(239,68,68,0.12);
+    --void: #3b82f6; --void-dim: rgba(59,130,246,0.12);
+    --observed: #6b7280; --confirmed: #f59e0b; --stored: #8b5cf6;
+    --radius: 10px; --radius-sm: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
+  ::selection { background: var(--accent); color: white; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .container { max-width: 1440px; margin: 0 auto; padding: 24px 28px; }
+
+  /* ── Header ── */
+  header { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-mark { width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--void)); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: white; }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+  header h1 .void { color: var(--void); }
+  .header-tags { display: flex; gap: 8px; }
+  .tag { font-size: 10px; padding: 3px 10px; border-radius: 20px; background: var(--surface2); border: 1px solid var(--border); color: var(--dim); letter-spacing: 0.5px; }
+  .tag.live { border-color: var(--active); color: var(--active); }
+  .header-spacer { flex: 1; }
+
+  /* ── Stats Cards ── */
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; position: relative; overflow: hidden; }
+  .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.3; }
+  .card-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--dim); margin-bottom: 14px; font-weight: 600; }
+
+  /* Memory state card */
+  .memory-state { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .memory-state .ms-item { text-align: center; }
+  .memory-state .ms-val { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .memory-state .ms-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  .tri-bar { height: 8px; border-radius: 4px; overflow: hidden; display: flex; gap: 2px; }
+  .tri-bar > div { border-radius: 3px; transition: width 0.6s ease; min-width: 2px; }
+  .tri-bar .bar-active { background: var(--active); }
+  .tri-bar .bar-void { background: var(--void); opacity: 0.6; }
+  .tri-bar .bar-inhib { background: var(--inhibitory); }
+  .bar-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 10px; color: var(--dim); }
+  .bar-legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .bar-legend .leg-active::before { background: var(--active); }
+  .bar-legend .leg-void::before { background: var(--void); opacity: 0.6; }
+  .bar-legend .leg-inhib::before { background: var(--inhibitory); }
+
+  /* Confidence pipeline */
+  .pipeline { display: flex; align-items: center; gap: 0; }
+  .pipe-stage { flex: 1; text-align: center; padding: 12px 8px; position: relative; }
+  .pipe-stage .pipe-count { font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .pipe-stage .pipe-name { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  .pipe-arrow { color: var(--border); font-size: 18px; padding: 0 2px; }
+  .pipe-stage.s-observed .pipe-count { color: var(--observed); }
+  .pipe-stage.s-stored .pipe-count { color: var(--stored); }
+  .pipe-stage.s-accessed .pipe-count { color: var(--void); }
+  .pipe-stage.s-confirmed .pipe-count { color: var(--confirmed); }
+  .pipe-bar { height: 3px; border-radius: 2px; margin-top: 8px; }
+  .s-observed .pipe-bar { background: var(--observed); }
+  .s-stored .pipe-bar { background: var(--stored); }
+  .s-accessed .pipe-bar { background: var(--void); }
+  .s-confirmed .pipe-bar { background: var(--confirmed); }
+
+  /* Performance card */
+  .perf-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .perf-item { text-align: center; padding: 8px; background: var(--surface2); border-radius: var(--radius-sm); }
+  .perf-val { font-size: 22px; font-weight: 700; color: var(--bright); }
+  .perf-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  .perf-item.highlight { background: var(--void-dim); }
+  .perf-item.highlight .perf-val { color: var(--void); }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 0; margin-bottom: 20px; background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); overflow: hidden; }
+  .tab { flex: 1; text-align: center; padding: 12px 16px; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; color: var(--dim); transition: all 0.2s; border-right: 1px solid var(--border); }
+  .tab:last-child { border-right: none; }
+  .tab:hover { color: var(--text); background: var(--surface2); }
+  .tab.active { color: var(--bright); background: var(--accent-dim); border-bottom: 2px solid var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; animation: fadeIn 0.2s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ── Recall Tester ── */
+  .recall-bar { display: flex; gap: 10px; margin-bottom: 20px; }
+  .recall-bar input { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 14px 18px; border-radius: var(--radius); font-family: inherit; font-size: 14px; transition: border-color 0.2s; }
+  .recall-bar input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+  .recall-bar input::placeholder { color: var(--dim); }
+  .recall-bar button { background: var(--accent); color: white; border: none; padding: 14px 28px; border-radius: var(--radius); cursor: pointer; font-family: inherit; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; transition: all 0.15s; }
+  .recall-bar button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+  .recall-bar button:active { transform: translateY(0); }
+
+  .recall-summary { display: flex; gap: 20px; flex-wrap: wrap; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; }
+  .recall-summary .rs-item { font-size: 12px; }
+  .recall-summary .rs-label { color: var(--dim); }
+  .recall-summary .rs-val { font-weight: 700; margin-left: 4px; }
+  .void-pill { display: inline-block; padding: 2px 10px; background: var(--inhib-dim); color: var(--inhibitory); border-radius: 20px; font-size: 11px; margin: 2px; }
+
+  .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; transition: border-color 0.2s; }
+  .result-card:hover { border-color: var(--accent); }
+  .result-header { display: flex; gap: 12px; padding: 12px 16px; align-items: center; border-bottom: 1px solid var(--border); font-size: 11px; }
+  .result-header .rh-id { color: var(--dim); font-weight: 600; }
+  .result-header .rh-cat { color: var(--accent); background: var(--accent-dim); padding: 1px 8px; border-radius: 10px; }
+  .result-header .rh-conf { color: var(--confirmed); }
+  .result-header .rh-score { margin-left: auto; font-weight: 700; color: var(--bright); }
+  .result-header .rh-access { color: var(--dim); }
+  .result-body { padding: 14px 16px; font-size: 13px; white-space: pre-wrap; line-height: 1.7; max-height: 240px; overflow-y: auto; color: var(--text); }
+  .result-score-bar { height: 2px; background: var(--border); }
+  .result-score-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--void)); transition: width 0.4s ease; }
+
+  /* ── Block Explorer ── */
+  .explorer-bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .explorer-bar select, .explorer-bar input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 8px 14px; border-radius: var(--radius-sm); font-family: inherit; font-size: 12px; }
+  .explorer-bar select:focus, .explorer-bar input:focus { outline: none; border-color: var(--accent); }
+  .explorer-bar .search-input { flex: 1; min-width: 200px; }
+
+  .block-table { width: 100%; border-collapse: collapse; }
+  .block-table th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .block-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 12px; vertical-align: top; }
+  .block-table tr { cursor: pointer; transition: background 0.15s; }
+  .block-table tr:hover { background: var(--accent-dim); }
+  .block-id { color: var(--dim); font-weight: 600; }
+  .block-kw { color: var(--accent); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .block-preview { color: var(--text); max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .state-badge { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .state-badge.s-active { background: var(--active); }
+  .state-badge.s-inhibitory { background: var(--inhibitory); }
+  .state-badge.s-observed { background: var(--observed); }
+  .conf-badge { font-size: 10px; padding: 1px 8px; border-radius: 10px; }
+  .conf-badge.c-confirmed { background: rgba(245,158,11,0.15); color: var(--confirmed); }
+  .conf-badge.c-accessed { background: var(--void-dim); color: var(--void); }
+  .conf-badge.c-stored { background: rgba(139,92,246,0.15); color: var(--stored); }
+  .conf-badge.c-observed { background: rgba(107,114,128,0.15); color: var(--observed); }
+
+  .pagination { display: flex; gap: 6px; justify-content: center; margin-top: 16px; }
+  .pagination button { background: var(--surface); border: 1px solid var(--border); color: var(--dim); padding: 6px 14px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-size: 12px; transition: all 0.15s; }
+  .pagination button:hover { border-color: var(--accent); color: var(--text); }
+  .pagination button.active { background: var(--accent); border-color: var(--accent); color: white; }
+  .pagination button:disabled { opacity: 0.3; cursor: default; }
+
+  /* ── Block detail modal ── */
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 100; justify-content: center; align-items: center; padding: 40px; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-width: 700px; width: 100%; max-height: 80vh; overflow-y: auto; animation: modalIn 0.2s ease; }
+  @keyframes modalIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+  .modal-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+  .modal-head h3 { font-size: 16px; font-weight: 700; }
+  .modal-head .close-btn { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--dim); width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+  .modal-head .close-btn:hover { background: var(--inhib-dim); color: var(--inhibitory); border-color: var(--inhibitory); }
+  .modal-body { padding: 24px; }
+  .modal-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+  .modal-meta .mm-item { background: var(--surface2); padding: 10px 14px; border-radius: var(--radius-sm); }
+  .modal-meta .mm-label { font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); }
+  .modal-meta .mm-val { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  .modal-content { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 20px; font-size: 13px; white-space: pre-wrap; line-height: 1.7; max-height: 300px; overflow-y: auto; margin-bottom: 16px; }
+  .modal-keywords { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+  .modal-keywords .kw { background: var(--accent-dim); color: var(--accent); padding: 3px 10px; border-radius: 20px; font-size: 11px; }
+  .modal-relations { border-top: 1px solid var(--border); padding-top: 16px; }
+  .modal-relations h4 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 8px; }
+  .relation-item { font-size: 12px; padding: 6px 0; color: var(--text); border-bottom: 1px solid var(--border); }
+
+  /* ── Categories ── */
+  .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .cat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 20px; display: flex; align-items: center; gap: 16px; }
+  .cat-name { font-weight: 700; font-size: 14px; min-width: 100px; }
+  .cat-bar-wrap { flex: 1; }
+  .cat-bar { height: 6px; border-radius: 3px; overflow: hidden; display: flex; gap: 1px; background: var(--border); }
+  .cat-bar .cb-active { background: var(--active); border-radius: 3px 0 0 3px; }
+  .cat-bar .cb-inhib { background: var(--inhibitory); border-radius: 0 3px 3px 0; }
+  .cat-detail { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  .cat-count { font-size: 20px; font-weight: 700; min-width: 50px; text-align: right; }
+
+  /* ── Timeline ── */
+  .timeline-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+  canvas#timeline-chart { width: 100%; height: 240px; }
+
+  /* ── Recent Recalls ── */
+  .recall-log { margin-top: 20px; }
+  .recall-log h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--dim); margin-bottom: 12px; }
+  .rl-row { display: grid; grid-template-columns: 1fr 80px 80px 80px 80px; gap: 8px; padding: 8px 12px; font-size: 12px; border-bottom: 1px solid var(--border); align-items: center; }
+  .rl-row:hover { background: var(--surface2); }
+  .rl-query { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rl-num { text-align: right; color: var(--dim); }
+  .rl-void { text-align: right; }
+
+  /* ── Void Zone Explorer ── */
+  .vz-input { display: flex; gap: 10px; margin-bottom: 20px; }
+  .vz-input input { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; border-radius: var(--radius-sm); font-family: inherit; font-size: 13px; }
+  .vz-input input:focus { outline: none; border-color: var(--void); box-shadow: 0 0 0 3px var(--void-dim); }
+  .vz-input button { background: var(--void); color: white; border: none; padding: 12px 24px; border-radius: var(--radius-sm); cursor: pointer; font-family: inherit; font-weight: 700; }
+  .vz-summary { display: flex; gap: 24px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; }
+  .vz-big { font-size: 32px; font-weight: 700; }
+  .vz-zones { display: grid; gap: 10px; }
+  .vz-zone { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; display: flex; align-items: center; gap: 16px; }
+  .vz-zone .vz-topic { font-weight: 600; flex: 1; }
+  .vz-zone .vz-count { font-size: 20px; font-weight: 700; color: var(--inhibitory); }
+  .vz-zone .vz-reason { font-size: 11px; color: var(--dim); }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .memory-state { grid-template-columns: repeat(2, 1fr); }
+    .modal-meta { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-mark">V</div>
+      <h1><span class="void">Void</span> Memory</h1>
+    </div>
+    <div class="header-tags">
+      <span class="tag" id="version">v1.0</span>
+      <span class="tag live" id="block-count">...</span>
+    </div>
+    <span class="header-spacer"></span>
+    <span class="tag" id="last-refresh">--</span>
+  </header>
+
+  <!-- Stats Cards -->
+  <div class="stats-grid">
+    <div class="card">
+      <div class="card-title">Memory State</div>
+      <div class="memory-state" id="state-stats"></div>
+      <div class="tri-bar" id="state-bar"></div>
+      <div class="bar-legend">
+        <span class="leg-active">Active</span>
+        <span class="leg-void">Observed</span>
+        <span class="leg-inhib">Inhibitory</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Confidence Pipeline</div>
+      <div class="pipeline" id="confidence-pipeline"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Performance</div>
+      <div class="perf-grid" id="perf-stats"></div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="recall">Recall</div>
+    <div class="tab" data-tab="voids">Void Zones</div>
+    <div class="tab" data-tab="explorer">Blocks</div>
+    <div class="tab" data-tab="categories">Categories</div>
+    <div class="tab" data-tab="timeline">Timeline</div>
+    <div class="tab" data-tab="log">Recall Log</div>
+  </div>
+
+  <!-- Recall Tester -->
+  <div class="tab-content active" id="tab-recall">
+    <div class="recall-bar">
+      <input type="text" id="recall-query" placeholder="Query void memory..." autofocus>
+      <button onclick="doRecall()">Recall</button>
+    </div>
+    <div id="recall-results"></div>
+  </div>
+
+  <!-- Void Zones -->
+  <div class="tab-content" id="tab-voids">
+    <div class="vz-input">
+      <input type="text" id="vz-query" placeholder="Explore void zones for a topic..." value="*">
+      <button onclick="loadVoidZones()">Explore</button>
+    </div>
+    <div id="vz-results"></div>
+  </div>
+
+  <!-- Block Explorer -->
+  <div class="tab-content" id="tab-explorer">
+    <div class="explorer-bar">
+      <select id="filter-state" onchange="loadBlocks()">
+        <option value="all">All states</option>
+        <option value="active">Active</option>
+        <option value="inhibitory">Inhibitory</option>
+      </select>
+      <select id="filter-confidence" onchange="loadBlocks()">
+        <option value="">All confidence</option>
+        <option value="confirmed">Confirmed</option>
+        <option value="accessed">Accessed</option>
+        <option value="stored">Stored</option>
+        <option value="observed">Observed</option>
+      </select>
+      <input type="text" class="search-input" id="filter-search" placeholder="Search blocks..." onkeyup="if(event.key==='Enter')loadBlocks()">
+    </div>
+    <div id="blocks-list"></div>
+    <div class="pagination" id="blocks-pagination"></div>
+  </div>
+
+  <!-- Categories -->
+  <div class="tab-content" id="tab-categories">
+    <div class="cat-grid" id="categories-list"></div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="tab-content" id="tab-timeline">
+    <div class="timeline-wrap">
+      <canvas id="timeline-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Recall Log -->
+  <div class="tab-content" id="tab-log">
+    <div id="recall-log-list"></div>
+  </div>
+</div>
+
+<!-- Block Detail Modal -->
+<div class="modal-overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal-inner"></div>
+</div>
+
+<script>
+const API = '';
+let currentPage = 1;
+let statsData = null;
+
+// ── Tab switching ──
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'explorer') loadBlocks();
+    if (tab.dataset.tab === 'categories') loadCategories();
+    if (tab.dataset.tab === 'timeline') loadTimeline();
+    if (tab.dataset.tab === 'log') renderRecallLog();
+    if (tab.dataset.tab === 'voids') loadVoidZones();
+  });
+});
+
+// ── Load stats ──
+async function loadStats() {
+  try {
+    const r = await fetch(API + '/api/stats').then(r => r.json());
+    statsData = r;
+    document.getElementById('block-count').textContent = r.total_blocks + ' blocks';
+    document.getElementById('last-refresh').textContent = new Date().toLocaleTimeString();
+
+    const total = r.total_blocks || 1;
+    const conf = r.by_confidence || {};
+    const observed = conf.observed || 0;
+
+    document.getElementById('state-stats').innerHTML = `
+      <div class="ms-item"><div class="ms-val" style="color:var(--active)">${r.active}</div><div class="ms-label">Active</div></div>
+      <div class="ms-item"><div class="ms-val" style="color:var(--void)">${Math.round(r.avg_void_fraction * 100)}%</div><div class="ms-label">Void Frac</div></div>
+      <div class="ms-item"><div class="ms-val" style="color:var(--inhibitory)">${r.inhibitory}</div><div class="ms-label">Inhibitory</div></div>
+      <div class="ms-item"><div class="ms-val" style="color:var(--observed)">${observed}</div><div class="ms-label">Observed</div></div>
+    `;
+
+    const activePct = r.active / total * 100;
+    const obsPct = observed / total * 100;
+    const inhibPct = r.inhibitory / total * 100;
+    document.getElementById('state-bar').innerHTML = `
+      <div class="bar-active" style="width:${activePct}%"></div>
+      <div class="bar-void" style="width:${obsPct}%"></div>
+      <div class="bar-inhib" style="width:${inhibPct}%"></div>
+    `;
+
+    // Confidence pipeline
+    document.getElementById('confidence-pipeline').innerHTML = `
+      <div class="pipe-stage s-observed">
+        <div class="pipe-count">${conf.observed || 0}</div>
+        <div class="pipe-name">Observed</div>
+        <div class="pipe-bar"></div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-stage s-stored">
+        <div class="pipe-count">${conf.stored || 0}</div>
+        <div class="pipe-name">Stored</div>
+        <div class="pipe-bar"></div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-stage s-accessed">
+        <div class="pipe-count">${conf.accessed || 0}</div>
+        <div class="pipe-name">Accessed</div>
+        <div class="pipe-bar"></div>
+      </div>
+      <div class="pipe-arrow">&rarr;</div>
+      <div class="pipe-stage s-confirmed">
+        <div class="pipe-count">${conf.confirmed || 0}</div>
+        <div class="pipe-name">Confirmed</div>
+        <div class="pipe-bar"></div>
+      </div>
+    `;
+
+    // Performance
+    const recalls = r.recent_recalls || [];
+    document.getElementById('perf-stats').innerHTML = `
+      <div class="perf-item highlight">
+        <div class="perf-val">${r.avg_recall_ms}ms</div>
+        <div class="perf-label">Avg Recall</div>
+      </div>
+      <div class="perf-item">
+        <div class="perf-val">${r.total_recalls}</div>
+        <div class="perf-label">Total Recalls</div>
+      </div>
+      <div class="perf-item">
+        <div class="perf-val">${Math.round(r.avg_void_fraction * 100)}%</div>
+        <div class="perf-label">Avg Void</div>
+      </div>
+      <div class="perf-item">
+        <div class="perf-val">${r.dead_weight_pct}%</div>
+        <div class="perf-label">Dead Weight</div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('Stats load failed:', e);
+  }
+}
+
+// ── Recall tester ──
+document.getElementById('recall-query').addEventListener('keyup', e => { if (e.key === 'Enter') doRecall(); });
+
+async function doRecall() {
+  const query = document.getElementById('recall-query').value.trim();
+  if (!query) return;
+  const el = document.getElementById('recall-results');
+  el.innerHTML = '<div style="color:var(--dim);padding:20px;text-align:center">Recalling...</div>';
+
+  const r = await fetch(API + '/api/recall', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, budget: 10000 }),
+  }).then(r => r.json());
+
+  const maxScore = Math.max(...r.blocks.map(b => b.score), 1);
+
+  el.innerHTML = `
+    <div class="recall-summary">
+      <div class="rs-item"><span class="rs-label">Blocks</span><span class="rs-val">${r.blocks.length}</span></div>
+      <div class="rs-item"><span class="rs-label">Scored</span><span class="rs-val">${r.blocks_scored}</span></div>
+      <div class="rs-item"><span class="rs-label">Voided</span><span class="rs-val" style="color:var(--inhibitory)">${r.blocks_voided}</span></div>
+      <div class="rs-item"><span class="rs-label">Void %</span><span class="rs-val" style="color:var(--void)">${Math.round(r.void_fraction * 100)}%</span></div>
+      <div class="rs-item"><span class="rs-label">Budget</span><span class="rs-val">${r.budget_used}/${r.budget_max}</span></div>
+      <div class="rs-item"><span class="rs-label">Time</span><span class="rs-val">${Math.round(r.duration_ms * 10) / 10}ms</span></div>
+    </div>
+    ${r.void_zones && r.void_zones.length ? `<div style="margin-bottom:16px">${r.void_zones.map(z => `<span class="void-pill">${esc(z)}</span>`).join(' ')}</div>` : ''}
+    ${r.blocks.map(b => `
+      <div class="result-card" onclick="showBlock(${b.id})">
+        <div class="result-header">
+          <span class="rh-id">#${b.id}</span>
+          <span class="rh-cat">${b.category}</span>
+          <span class="rh-conf">${b.confidence}</span>
+          <span class="rh-access">${b.access_count}x</span>
+          <span class="rh-score">score: ${Math.round(b.score * 100) / 100}</span>
+        </div>
+        <div class="result-body">${esc(b.content)}</div>
+        <div class="result-score-bar"><div class="fill" style="width:${Math.round(b.score / maxScore * 100)}%"></div></div>
+      </div>
+    `).join('')}
+  `;
+
+  loadStats();
+}
+
+// ── Void Zone Explorer ──
+document.getElementById('vz-query').addEventListener('keyup', e => { if (e.key === 'Enter') loadVoidZones(); });
+
+async function loadVoidZones() {
+  const query = document.getElementById('vz-query').value.trim() || '*';
+  const el = document.getElementById('vz-results');
+  el.innerHTML = '<div style="color:var(--dim);padding:20px;text-align:center">Exploring voids...</div>';
+
+  const r = await fetch(API + '/api/void-zones?q=' + encodeURIComponent(query)).then(r => r.json());
+
+  el.innerHTML = `
+    <div class="vz-summary">
+      <div>
+        <div class="vz-big" style="color:var(--inhibitory)">${r.total_voided}</div>
+        <div style="font-size:11px;color:var(--dim)">Blocks voided</div>
+      </div>
+      <div>
+        <div class="vz-big" style="color:var(--void)">${Math.round(r.void_fraction * 100)}%</div>
+        <div style="font-size:11px;color:var(--dim)">Void fraction</div>
+      </div>
+      <div>
+        <div class="vz-big">${r.zones ? r.zones.length : 0}</div>
+        <div style="font-size:11px;color:var(--dim)">Distinct zones</div>
+      </div>
+    </div>
+    <div class="vz-zones">
+      ${(r.zones || []).map(z => `
+        <div class="vz-zone">
+          <div class="vz-topic">${esc(z.topic)}</div>
+          <div class="vz-reason" style="flex:1">${esc(z.reason)}</div>
+          <div class="vz-count">${z.block_count}</div>
+        </div>
+      `).join('') || '<div style="color:var(--dim);padding:20px">No void zones found</div>'}
+    </div>
+  `;
+}
+
+// ── Block Explorer ──
+async function loadBlocks(page) {
+  currentPage = page || 1;
+  const state = document.getElementById('filter-state').value;
+  const confidence = document.getElementById('filter-confidence').value;
+  const search = document.getElementById('filter-search').value;
+
+  const params = new URLSearchParams({ page: currentPage, limit: 50, state });
+  if (confidence) params.set('confidence', confidence);
+  if (search) params.set('q', search);
+
+  const r = await fetch(API + '/api/blocks?' + params).then(r => r.json());
+  const el = document.getElementById('blocks-list');
+
+  el.innerHTML = `
+    <table class="block-table">
+      <thead><tr>
+        <th style="width:30px"></th>
+        <th style="width:50px">ID</th>
+        <th style="width:80px">Conf</th>
+        <th style="width:90px">Category</th>
+        <th>Keywords</th>
+        <th>Content</th>
+      </tr></thead>
+      <tbody>
+        ${r.blocks.map(b => `
+          <tr onclick="showBlock(${b.id})">
+            <td><span class="state-badge s-${b.state === 1 ? (b.confidence === 'observed' ? 'observed' : 'active') : 'inhibitory'}"></span></td>
+            <td class="block-id">${b.id}</td>
+            <td><span class="conf-badge c-${b.confidence}">${b.confidence}</span></td>
+            <td style="color:var(--accent)">${b.category}</td>
+            <td class="block-kw">${esc(b.keywords.split(',').slice(0, 3).join(', '))}</td>
+            <td class="block-preview">${esc(b.content.slice(0, 150))}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+
+  // Pagination
+  const pagEl = document.getElementById('blocks-pagination');
+  let html = '';
+  if (r.pages > 1) {
+    html += `<button ${currentPage === 1 ? 'disabled' : ''} onclick="loadBlocks(${currentPage - 1})">&laquo;</button>`;
+    for (let p = 1; p <= r.pages; p++) {
+      if (r.pages > 10 && Math.abs(p - currentPage) > 2 && p !== 1 && p !== r.pages) {
+        if (p === currentPage - 3 || p === currentPage + 3) html += '<button disabled>...</button>';
+        continue;
+      }
+      html += `<button class="${p === currentPage ? 'active' : ''}" onclick="loadBlocks(${p})">${p}</button>`;
+    }
+    html += `<button ${currentPage === r.pages ? 'disabled' : ''} onclick="loadBlocks(${currentPage + 1})">&raquo;</button>`;
+  }
+  pagEl.innerHTML = html;
+}
+
+// ── Block detail modal ──
+async function showBlock(id) {
+  const r = await fetch(API + '/api/block?id=' + id).then(r => r.json());
+  const b = r.block;
+  if (!b) return;
+
+  const stateLabel = b.state === 1 ? 'Active' : 'Inhibitory';
+  const stateColor = b.state === 1 ? 'var(--active)' : 'var(--inhibitory)';
+
+  document.getElementById('modal-inner').innerHTML = `
+    <div class="modal-head">
+      <h3>Block #${b.id}</h3>
+      <span class="conf-badge c-${b.confidence}">${b.confidence}</span>
+      <span style="color:${stateColor};font-size:12px;font-weight:600">${stateLabel}</span>
+      <button class="close-btn" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-meta">
+        <div class="mm-item"><div class="mm-label">Category</div><div class="mm-val" style="color:var(--accent)">${b.category}</div></div>
+        <div class="mm-item"><div class="mm-label">Access Count</div><div class="mm-val">${b.access_count}</div></div>
+        <div class="mm-item"><div class="mm-label">Created</div><div class="mm-val" style="font-size:12px">${b.created_at}</div></div>
+        <div class="mm-item"><div class="mm-label">Last Accessed</div><div class="mm-val" style="font-size:12px">${b.accessed_at || 'Never'}</div></div>
+        <div class="mm-item"><div class="mm-label">Supersedes</div><div class="mm-val">${b.supersedes ? '#' + b.supersedes : 'None'}</div></div>
+        <div class="mm-item"><div class="mm-label">State</div><div class="mm-val" style="color:${stateColor}">${b.state}</div></div>
+      </div>
+      <div class="modal-content">${esc(b.content)}</div>
+      <div class="modal-keywords">${b.keywords.split(',').map(k => `<span class="kw">${esc(k.trim())}</span>`).join('')}</div>
+      ${r.inhibitions.length ? `
+        <div class="modal-relations">
+          <h4>Inhibits (${r.inhibitions.length})</h4>
+          ${r.inhibitions.map(i => `<div class="relation-item"><span style="color:var(--dim)">#${i.blocked_id}</span> ${esc((i.blocked_keywords || '').slice(0, 80))}</div>`).join('')}
+        </div>
+      ` : ''}
+      ${r.inhibitedBy.length ? `
+        <div class="modal-relations">
+          <h4>Inhibited By (${r.inhibitedBy.length})</h4>
+          ${r.inhibitedBy.map(i => `<div class="relation-item"><span style="color:var(--dim)">#${i.blocker_id}</span> ${esc((i.blocker_keywords || '').slice(0, 80))}</div>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+  document.getElementById('modal').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── Categories ──
+async function loadCategories() {
+  const r = await fetch(API + '/api/categories').then(r => r.json());
+  const el = document.getElementById('categories-list');
+  const maxCount = Math.max(...r.map(c => c.count));
+
+  el.innerHTML = r.map(c => `
+    <div class="cat-card">
+      <div class="cat-name">${c.category}</div>
+      <div class="cat-bar-wrap">
+        <div class="cat-bar">
+          <div class="cb-active" style="width:${c.active / c.count * 100}%"></div>
+          <div class="cb-inhib" style="width:${c.inhibitory / c.count * 100}%"></div>
+        </div>
+        <div class="cat-detail">${c.active} active, ${c.inhibitory} inhibitory, ${Math.round(c.avg_access * 10) / 10} avg access</div>
+      </div>
+      <div class="cat-count">${c.count}</div>
+    </div>
+  `).join('');
+}
+
+// ── Timeline ──
+async function loadTimeline() {
+  const r = await fetch(API + '/api/timeline').then(r => r.json());
+  const canvas = document.getElementById('timeline-chart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = canvas.clientWidth * dpr;
+  canvas.height = canvas.clientHeight * dpr;
+  ctx.scale(dpr, dpr);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const pad = { top: 20, right: 20, bottom: 40, left: 50 };
+  const plotW = w - pad.left - pad.right;
+  const plotH = h - pad.top - pad.bottom;
+
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+  ctx.fillRect(0, 0, w, h);
+
+  if (!r.length) {
+    ctx.fillStyle = '#555570';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('No timeline data yet', w / 2, h / 2);
+    return;
+  }
+
+  const maxVal = Math.max(...r.map(d => d.created));
+  const barW = Math.max(4, plotW / r.length - 2);
+
+  // Grid lines
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + plotH * (1 - i / 4);
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(w - pad.right, y);
+    ctx.stroke();
+
+    ctx.fillStyle = '#555570';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxVal * i / 4), pad.left - 8, y + 4);
+  }
+
+  // Bars
+  r.forEach((d, i) => {
+    const x = pad.left + i * (barW + 2);
+    const bh = (d.created / maxVal) * plotH;
+    const ih = (d.inhibited / maxVal) * plotH;
+
+    // Active portion (green)
+    const grad = ctx.createLinearGradient(x, pad.top + plotH - bh, x, pad.top + plotH);
+    grad.addColorStop(0, '#10b981');
+    grad.addColorStop(1, '#059669');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, pad.top + plotH - bh, barW, bh - ih);
+
+    // Inhibitory portion (red)
+    if (ih > 0) {
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(x, pad.top + plotH - ih, barW, ih);
+    }
+  });
+
+  // X labels
+  ctx.fillStyle = '#555570';
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(r.length / 10));
+  r.forEach((d, i) => {
+    if (i % step !== 0 && i !== r.length - 1) return;
+    const x = pad.left + i * (barW + 2) + barW / 2;
+    ctx.save();
+    ctx.translate(x, h - pad.bottom + 14);
+    ctx.rotate(-Math.PI / 6);
+    ctx.fillText(d.day.slice(5), 0, 0);
+    ctx.restore();
+  });
+}
+
+// ── Recall Log ──
+function renderRecallLog() {
+  if (!statsData || !statsData.recent_recalls) return;
+  const el = document.getElementById('recall-log-list');
+  const recalls = statsData.recent_recalls;
+
+  el.innerHTML = `
+    <div class="rl-row" style="border-bottom:2px solid var(--border)">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600">Query</div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600;text-align:right">Blocks</div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600;text-align:right">Scored</div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600;text-align:right">Void %</div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);font-weight:600;text-align:right">Time</div>
+    </div>
+    ${recalls.map(r => {
+      const voidPct = Math.round((r.void_fraction || 0) * 100);
+      const voidColor = voidPct >= 40 ? 'var(--inhibitory)' : voidPct >= 25 ? 'var(--void)' : 'var(--active)';
+      return `
+        <div class="rl-row">
+          <div class="rl-query">${esc(r.query)}</div>
+          <div class="rl-num">${r.blocks_returned}</div>
+          <div class="rl-num">${r.blocks_scored}</div>
+          <div class="rl-void" style="color:${voidColor};font-weight:600">${voidPct}%</div>
+          <div class="rl-num">${Math.round(r.duration_ms * 10) / 10}ms</div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+// ── Helpers ──
+function esc(s) {
+  if (!s) return '';
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Init ──
+loadStats();
+setInterval(loadStats, 30000);
+</script>
+</body>
+</html>

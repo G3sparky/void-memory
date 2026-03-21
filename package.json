@@ -1,0 +1,27 @@
+{
+  "name": "void-memory",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/mcp-server.js",
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node dist/mcp-server.js",
+    "test": "node dist/test.js",
+    "self-test": "node dist/self-test.js",
+    "dream": "node dist/dream.js",
+    "benchmark": "node dist/benchmark.js",
+    "seed": "node dist/seed.js"
+  },
+  "keywords": ["memory", "ternary", "void", "mcp"],
+  "author": "Gavin + Tron",
+  "license": "ISC",
+  "description": "Ternary memory system with 30% structural void — inspired by PNN research",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3"
+  }
+}
