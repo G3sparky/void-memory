@@ -263,8 +263,24 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
           }
         }
       }
+
+      // Service name matching: "where does Ollama run" → boost Ollama blocks
+      if (meta.services) {
+        const queryLower = query.toLowerCase();
+        for (const [service, blockIds] of Object.entries(meta.services as Record<string, number[]>)) {
+          const serviceName = service.replace(/-/g, ' ');
+          if (queryLower.includes(serviceName) || queryLower.includes(service)) {
+            if (Array.isArray(blockIds)) {
+              for (const id of blockIds.slice(0, 10)) {
+                metadataBoosts.set(id, (metadataBoosts.get(id) || 0) + 20);
+              }
+            }
+          }
+        }
+      }
     }
-  } catch { /* metadata index unavailable — continue with keyword/semantic only */ }
+  } catch (e) { console.error('[META] metadata index error:', e); }
+  if (metadataBoosts.size > 0) console.log('[META] boosts applied:', Object.fromEntries(metadataBoosts));
 
   // ── Pass 1: Score all blocks (with synonym + co-occurrence expansion) ──
   const rawTokens = tokenize(query);
@@ -303,10 +319,11 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
         } else if (cosScore && cosScore > 0.3) {
           // Moderate semantic relevance — small boost
           c.score += cosScore * 10;
-        } else if (cosScore !== undefined && cosScore < 0.3) {
+        } else if (cosScore !== undefined && cosScore < 0.3 && !metadataBoosts.has(c.id)) {
           // RELEVANCE GATE: keyword matched but semantically irrelevant
           // Penalise to prevent false positives (e.g. "production" matching
           // TASM crash history when query is about Kubernetes)
+          // Skip penalty for metadata-boosted blocks (exact entity matches)
           c.score *= 0.5;
         }
         // If no semantic score at all (block not in index), keep keyword score as-is
@@ -378,7 +395,7 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
     if (gapIdx !== null) {
       for (let i = gapIdx; i < candidates.length; i++) {
         const c = candidates[i];
-        if (!c.voided && !protectedClusters.has(c.topic_cluster)) {
+        if (!c.voided && !protectedClusters.has(c.topic_cluster) && !metadataBoosts.has(c.id)) {
           c.voided = true;
           voidCount++;
           voidZoneCounts.set(c.topic_cluster, (voidZoneCounts.get(c.topic_cluster) || 0) + 1);
@@ -394,7 +411,7 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
         if (protectedClusters.has(cluster)) continue;
 
         for (const c of candidates) {
-          if (c.topic_cluster === cluster && !c.voided) {
+          if (c.topic_cluster === cluster && !c.voided && !metadataBoosts.has(c.id)) {
             c.voided = true;
             voidCount++;
             voidZoneCounts.set(cluster, (voidZoneCounts.get(cluster) || 0) + 1);
@@ -407,7 +424,7 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
     // Strategy C: Void lowest-scoring individuals from non-primary clusters
     if (voidCount < targetVoidCount) {
       const remaining = candidates
-        .filter(c => !c.voided && c.topic_cluster !== primaryCluster)
+        .filter(c => !c.voided && c.topic_cluster !== primaryCluster && !metadataBoosts.has(c.id))
         .sort((a, b) => a.score - b.score);
 
       for (const c of remaining) {

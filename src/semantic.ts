@@ -11,9 +11,15 @@
 
 const OLLAMA_URL = 'http://192.168.1.202:11434';
 const EMBED_MODEL = 'nomic-embed-text';
-const INDEX_PATH = '/opt/void-memory/data/embeddings.json'; // Simple JSON until FAISS is installed
 
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+// Embedding DBs — Tron stores in SQLite, one per agent
+const SEMANTIC_DBS = [
+  '/opt/void-memory/data/semantic-arch.db',
+  '/opt/void-memory/data/tron/semantic-tron.db',
+];
+
+import { existsSync } from 'fs';
+import Database from 'better-sqlite3';
 
 interface EmbeddingEntry {
   block_id: number;
@@ -22,13 +28,25 @@ interface EmbeddingEntry {
 
 let embeddingCache: EmbeddingEntry[] = [];
 
-// Load existing embeddings from disk
+// Load embeddings from Tron's SQLite databases
 export function loadEmbeddings(): void {
-  if (existsSync(INDEX_PATH)) {
+  embeddingCache = [];
+  for (const dbPath of SEMANTIC_DBS) {
+    if (!existsSync(dbPath)) continue;
     try {
-      embeddingCache = JSON.parse(readFileSync(INDEX_PATH, 'utf-8'));
-    } catch { embeddingCache = []; }
+      const db = new Database(dbPath, { readonly: true });
+      const rows = db.prepare('SELECT block_id, embedding FROM embeddings').all() as Array<{ block_id: number; embedding: Buffer }>;
+      for (const row of rows) {
+        try {
+          // Embedding stored as BLOB — decode as Float32Array
+          const floats = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
+          embeddingCache.push({ block_id: row.block_id, embedding: Array.from(floats) });
+        } catch { /* skip malformed embedding */ }
+      }
+      db.close();
+    } catch { /* DB not accessible */ }
   }
+  console.log(`[semantic] Loaded ${embeddingCache.length} embeddings from ${SEMANTIC_DBS.length} DBs`);
 }
 
 // Generate embedding for text via Ollama
@@ -52,7 +70,7 @@ export async function addBlockEmbedding(blockId: number, content: string): Promi
     embeddingCache = embeddingCache.filter(e => e.block_id !== blockId);
     embeddingCache.push({ block_id: blockId, embedding });
     // Persist
-    writeFileSync(INDEX_PATH, JSON.stringify(embeddingCache));
+    
   } catch { /* Embedding failed — non-critical, keyword search still works */ }
 }
 
@@ -103,7 +121,7 @@ export async function rebuildIndex(blocks: Array<{ id: number; content: string }
     }
   }
   
-  writeFileSync(INDEX_PATH, JSON.stringify(embeddingCache));
+  
   return { total: blocks.length, embedded, failed };
 }
 
