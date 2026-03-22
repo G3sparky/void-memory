@@ -220,6 +220,52 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
     inhibitedSet.set(inh.blocked_id, inh.blocker_id);
   }
 
+  // ── Pre-pass: Structured metadata lookup for numeric queries ──
+  // Embeddings are bad at numbers. Exact-match lookup for ports, CTs, IPs, percentages.
+  const metadataBoosts = new Map<number, number>();
+  try {
+    const { readFileSync, existsSync } = await import('fs');
+    const metaPath = '/opt/void-memory/data/tasm-metadata-index.json';
+    if (existsSync(metaPath)) {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+      // Extract numbers from query
+      const queryNumbers = query.match(/\d+\.?\d*/g) || [];
+      // Also extract entity keywords that suggest numeric lookup
+      const numericHints = query.match(/\b(port|ct|container|ip|version|percent|accuracy)\b/gi) || [];
+
+      for (const num of queryNumbers) {
+        // Check each category
+        for (const [category, entries] of Object.entries(meta)) {
+          if (typeof entries === 'object' && entries !== null) {
+            const blockIds = (entries as Record<string, number[]>)[num];
+            if (blockIds && Array.isArray(blockIds)) {
+              for (const id of blockIds.slice(0, 10)) {
+                metadataBoosts.set(id, (metadataBoosts.get(id) || 0) + 25); // Strong boost
+              }
+            }
+          }
+        }
+      }
+      // If query mentions "port" or "container" without a number, still boost blocks containing ports/CTs
+      if (numericHints.length > 0 && queryNumbers.length === 0) {
+        for (const hint of numericHints) {
+          const cat = hint.toLowerCase().startsWith('port') ? 'ports' :
+                      hint.toLowerCase().startsWith('ct') || hint.toLowerCase().startsWith('container') ? 'cts' : null;
+          if (cat && meta[cat]) {
+            // Boost all blocks that have any port/CT data
+            for (const [, blockIds] of Object.entries(meta[cat] as Record<string, number[]>)) {
+              if (Array.isArray(blockIds)) {
+                for (const id of blockIds.slice(0, 5)) {
+                  metadataBoosts.set(id, (metadataBoosts.get(id) || 0) + 15);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch { /* metadata index unavailable — continue with keyword/semantic only */ }
+
   // ── Pass 1: Score all blocks (with synonym + co-occurrence expansion) ──
   const rawTokens = tokenize(query);
   const synExpanded = expandWithSynonyms(rawTokens);
@@ -234,6 +280,14 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
     inhibited_by: inhibitedSet.get(b.id) || null,
     tokens: Math.ceil(b.content.length / CHARS_PER_TOKEN),
   }));
+
+  // Apply metadata boosts (for numeric queries)
+  if (metadataBoosts.size > 0) {
+    for (const c of candidates) {
+      const boost = metadataBoosts.get(c.id);
+      if (boost) c.score += boost;
+    }
+  }
 
   // ── Semantic boost (E1) — add cosine similarity scores from embedding index ──
   try {
