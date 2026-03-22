@@ -243,10 +243,19 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
       const semanticMap = new Map(semanticResults.map(r => [r.block_id, r.cosine_score]));
       for (const c of candidates) {
         const cosScore = semanticMap.get(c.id);
-        if (cosScore && cosScore > 0.3) {
-          // Boost keyword score by semantic relevance (weighted 0.5x to not overwhelm keywords)
-          c.score += cosScore * 20; // cosine 0.3-1.0 → boost 6-20 points
+        if (cosScore && cosScore > 0.6) {
+          // High semantic relevance — boost keyword score
+          c.score += cosScore * 20;
+        } else if (cosScore && cosScore > 0.3) {
+          // Moderate semantic relevance — small boost
+          c.score += cosScore * 10;
+        } else if (cosScore !== undefined && cosScore < 0.3) {
+          // RELEVANCE GATE: keyword matched but semantically irrelevant
+          // Penalise to prevent false positives (e.g. "production" matching
+          // TASM crash history when query is about Kubernetes)
+          c.score *= 0.5;
         }
+        // If no semantic score at all (block not in index), keep keyword score as-is
       }
       // Also add blocks that semantic found but keyword missed (semantic-only retrieval)
       for (const sr of semanticResults) {
@@ -275,17 +284,9 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
 
   const totalScored = candidates.length;
 
-  // ── Temporal boost (E2) ──
-  const temporalQuery = detectTemporalQuery(query);
-  if (temporalQuery.type) {
-    const boosts = temporalBoost(db, temporalQuery, candidates.map(c => c.id));
-    for (const c of candidates) {
-      const boost = boosts.get(c.id);
-      if (boost !== undefined) c.score *= boost;
-    }
-    // Re-sort after temporal boost
-    candidates.sort((a, b) => b.score - a.score);
-  }
+    // ── Temporal boost (E2) — DISABLED pending calibration ──
+  // Index is built and available but boost not applied until combined with E1 semantic scoring.
+  // To re-enable: uncomment and tune multipliers in temporal-index.ts
 
   // ── Pass 2: Void marking (Phase 2 algorithm) ──
   // Minimum 6 candidates before void marking activates
