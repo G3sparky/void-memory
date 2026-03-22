@@ -11,6 +11,8 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { openDB } from './db.js';
 import { recall, store, stats, voidZones, type RecallResult } from './engine.js';
+import { temporalStats, backfillTemporalIndex } from "./temporal-index.js";
+import { scanContradictions } from "./contradiction-detector.js";
 
 const PORT = parseInt(process.argv[2] || '3410');
 const PUBLIC_DIR = join(import.meta.url.replace('file://', '').replace('/dist/dashboard.js', '').replace('/src/dashboard.ts', ''), 'public');
@@ -72,7 +74,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
 
   if (path === '/api/recall' && req.method === 'POST') {
     const body = JSON.parse(await parseBody(req));
-    const result = recall(db, body.query, body.budget);
+    const result = await recall(db, body.query, body.budget);
     json(res, {
       blocks: result.blocks,
       void_zones: result.void_zones,
@@ -157,6 +159,25 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       FROM blocks WHERE state >= 0 GROUP BY confidence ORDER BY count DESC
     `).all();
     json(res, tiers);
+    return;
+  }
+
+  if (path === "/api/temporal") {
+    const s = temporalStats(db);
+    json(res, s);
+    return;
+  }
+
+  if (path === "/api/temporal/backfill" && req.method === "POST") {
+    const result = backfillTemporalIndex(db);
+    json(res, { ok: true, ...result });
+    return;
+  }
+
+  if (path === "/api/contradictions") {
+    const autoResolve = url.searchParams.get("resolve") === "true";
+    const result = scanContradictions(db, autoResolve);
+    json(res, result);
     return;
   }
 

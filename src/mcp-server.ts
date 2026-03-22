@@ -104,10 +104,10 @@ const TOOLS = [
 
 // ── Tool handlers ──
 
-function handleTool(name: string, args: any): any {
+async function handleTool(name: string, args: any): Promise<any> {
   switch (name) {
     case 'void_recall': {
-      const result = recall(db, args.query, args.budget);
+      const result = await recall(db, args.query, args.budget);
       return {
         summary: `Recalled ${result.blocks.length} blocks (scored ${result.blocks_scored}, voided ${result.blocks_voided}, ${Math.round(result.void_fraction * 100)}% void) in ${result.duration_ms}ms. Budget: ${result.budget_used}/${result.budget_max} tokens.`,
         blocks: result.blocks.map(b => ({
@@ -247,7 +247,7 @@ function handleTool(name: string, args: any): any {
     }
 
     case 'void_self_test': {
-      const report = runSelfTest(db);
+      const report = await runSelfTest(db);
       return {
         run_id: report.run_id,
         timestamp: report.timestamp,

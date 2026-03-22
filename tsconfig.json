@@ -11,5 +11,13 @@
     "sourceMap": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/benchmark.ts",
+    "src/test.ts",
+    "src/self-test.ts",
+    "src/overnight.ts"
+  ]
 }

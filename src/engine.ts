@@ -6,6 +6,8 @@
 
 import type Database from 'better-sqlite3';
 import type { Block } from './db.js';
+import { detectTemporalQuery, temporalBoost, indexBlockDates } from "./temporal-index.js";
+import { checkNewBlockContradiction } from "./contradiction-detector.js";
 
 // ── Types ──
 
@@ -196,7 +198,7 @@ function findScoreGap(scores: number[]): number | null {
 
 // ── Core engine ──
 
-export function recall(db: Database.Database, query: string, budgetTokens?: number): RecallResult {
+export async function recall(db: Database.Database, query: string, budgetTokens?: number): Promise<RecallResult> {
   const start = performance.now();
   const budget = Math.min(budgetTokens || DEFAULT_BUDGET, MAX_BUDGET);
 
@@ -233,6 +235,38 @@ export function recall(db: Database.Database, query: string, budgetTokens?: numb
     tokens: Math.ceil(b.content.length / CHARS_PER_TOKEN),
   }));
 
+  // ── Semantic boost (E1) — add cosine similarity scores from embedding index ──
+  try {
+    const { semanticSearch: semSearch } = await import('./semantic.js');
+    const semanticResults = await semSearch(query);
+    if (semanticResults.length > 0) {
+      const semanticMap = new Map(semanticResults.map(r => [r.block_id, r.cosine_score]));
+      for (const c of candidates) {
+        const cosScore = semanticMap.get(c.id);
+        if (cosScore && cosScore > 0.3) {
+          // Boost keyword score by semantic relevance (weighted 0.5x to not overwhelm keywords)
+          c.score += cosScore * 20; // cosine 0.3-1.0 → boost 6-20 points
+        }
+      }
+      // Also add blocks that semantic found but keyword missed (semantic-only retrieval)
+      for (const sr of semanticResults) {
+        if (sr.cosine_score > 0.5 && !candidates.find(c => c.id === sr.block_id)) {
+          const block = allBlocks.find(b => b.id === sr.block_id);
+          if (block && !inhibitedSet.has(block.id)) {
+            candidates.push({
+              ...block,
+              score: sr.cosine_score * 20,
+              topic_cluster: block.keywords.split(',')[0]?.trim() || block.category,
+              voided: false,
+              inhibited_by: null,
+              tokens: Math.ceil(block.content.length / CHARS_PER_TOKEN),
+            });
+          }
+        }
+      }
+    }
+  } catch { /* Semantic search unavailable — keyword-only fallback */ }
+
   // Remove zero-score candidates and inhibited blocks
   candidates = candidates
     .filter(c => c.score > 0 && !c.inhibited_by)
@@ -240,6 +274,18 @@ export function recall(db: Database.Database, query: string, budgetTokens?: numb
     .slice(0, MAX_CANDIDATES);
 
   const totalScored = candidates.length;
+
+  // ── Temporal boost (E2) ──
+  const temporalQuery = detectTemporalQuery(query);
+  if (temporalQuery.type) {
+    const boosts = temporalBoost(db, temporalQuery, candidates.map(c => c.id));
+    for (const c of candidates) {
+      const boost = boosts.get(c.id);
+      if (boost !== undefined) c.score *= boost;
+    }
+    // Re-sort after temporal boost
+    candidates.sort((a, b) => b.score - a.score);
+  }
 
   // ── Pass 2: Void marking (Phase 2 algorithm) ──
   // Minimum 6 candidates before void marking activates
@@ -440,6 +486,11 @@ export function store(db: Database.Database, opts: StoreOpts): { id: number; ded
     }
   }
 
+
+  // E3: Auto-contradiction detection
+  // If new block contradicts an existing one, auto-supersede the older block
+  const contradiction = checkNewBlockContradiction(db, content, keywordStr, category);
+  const autoSupersedes = contradiction.supersedes || supersedes;
   // Insert the new block first
   const result = db.prepare(`
     INSERT INTO blocks (content, category, keywords, state, confidence)
@@ -448,11 +499,14 @@ export function store(db: Database.Database, opts: StoreOpts): { id: number; ded
 
   const newId = result.lastInsertRowid as number;
 
+  // Index temporal events (E2)
+  indexBlockDates(db, newId as number, content, keywordStr);
+
   // Handle supersession after insert (so we have a valid blocker_id)
-  if (supersedes) {
-    db.prepare(`UPDATE blocks SET state = -1 WHERE id = ?`).run(supersedes);
+  if (autoSupersedes) {
+    db.prepare(`UPDATE blocks SET state = -1 WHERE id = ?`).run(autoSupersedes);
     db.prepare(`INSERT INTO inhibitions (blocker_id, blocked_id, reason) VALUES (?, ?, 'superseded')`)
-      .run(newId, supersedes);
+      .run(newId, autoSupersedes);
   }
 
   return { id: newId, deduped: false };
@@ -512,8 +566,8 @@ export function stats(db: Database.Database): MemoryStats {
 
 // ── Void Zones (explain what's being suppressed) ──
 
-export function voidZones(db: Database.Database, query: string): { zones: Array<{ topic: string; block_count: number; reason: string }>; total_voided: number; void_fraction: number } {
-  const result = recall(db, query);
+export async function voidZones(db: Database.Database, query: string): Promise<{ zones: Array<{ topic: string; block_count: number; reason: string }>; total_voided: number; void_fraction: number }> {
+  const result = await recall(db, query);
   return {
     zones: result.void_zones.map(z => ({
       topic: z,

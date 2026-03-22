@@ -6,6 +6,7 @@
 import Database from 'better-sqlite3';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
+import { migrateTemporalIndex } from "./temporal-index.js";
 
 const DATA_DIR = process.env.VOID_DATA_DIR || join(import.meta.dirname, '..', 'data');
 
@@ -41,6 +42,7 @@ export function openDB(path?: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   migrate(db);
+  migrateTemporalIndex(db);
   return db;
 }
 

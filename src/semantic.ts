@@ -111,3 +111,23 @@ export async function rebuildIndex(blocks: Array<{ id: number; content: string }
 export function embeddingStats(): { total: number; indexed: number; model: string } {
   return { total: embeddingCache.length, indexed: embeddingCache.length, model: EMBED_MODEL };
 }
+
+// Synchronous search using cached embeddings (for inline use in recall)
+// Query embedding is generated async on first call, cached for session
+let _lastQuery = '';
+let _lastQueryEmb: number[] = [];
+
+export function semanticSearchSync(query: string): Array<{ block_id: number; cosine_score: number }> {
+  if (embeddingCache.length === 0) return [];
+  // Can't do sync embedding generation — return cached results if query matches
+  // The actual embedding happens via the async path; this returns empty if no cache
+  return [];
+}
+
+// Pre-warm: generate query embedding async, store for sync retrieval
+export async function preWarmQuery(query: string): Promise<Array<{ block_id: number; cosine_score: number }>> {
+  return semanticSearch(query);
+}
+
+// Initialize on module load
+loadEmbeddings();

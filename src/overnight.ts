@@ -40,7 +40,7 @@ async function main() {
 
   // Phase 2: Self-test
   console.log('Running self-test...');
-  const testReport = runSelfTest(db);
+  const testReport = await runSelfTest(db);
   console.log(`Self-test: ${testReport.summary.tests_passed}/${testReport.summary.tests_run} passed, score ${testReport.summary.overall_score}\n`);
 
   // Phase 3: Generate morning message

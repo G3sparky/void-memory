@@ -87,7 +87,7 @@ function main() {
 
   for (const { query, expect } of BENCHMARK) {
     // Void Memory recall
-    const vr = recall(db, query);
+        const vr = await recall(db, query);
     const vScore = scoreRelevance(vr.blocks, expect);
     voidResults.push({
       query,
