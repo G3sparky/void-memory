@@ -1,0 +1,16 @@
+src/
+data/
+public/
+*.db
+*.db-wal
+*.db-shm
+embeddings.json
+tsconfig.json
+.git/
+.gitignore
+AUDIT.md
+Dockerfile
+temporal-search.py
+contradiction-detector.cjs
+query-expander.js
+void-memory.db
