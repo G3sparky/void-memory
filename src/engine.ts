@@ -225,7 +225,9 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
   const metadataBoosts = new Map<number, number>();
   try {
     const { readFileSync, existsSync } = await import('fs');
-    const metaPath = '/opt/void-memory/data/tasm-metadata-index.json';
+    const metaPath = process.env.VOID_DATA_DIR
+      ? `${process.env.VOID_DATA_DIR}/tasm-metadata-index.json`
+      : new URL('../data/tasm-metadata-index.json', import.meta.url).pathname;
     if (existsSync(metaPath)) {
       const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
       // Extract numbers from query
@@ -355,19 +357,58 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
 
   const totalScored = candidates.length;
 
-    // ── Temporal boost (E2) — DISABLED pending calibration ──
-  // Index is built and available but boost not applied until combined with E1 semantic scoring.
-  // To re-enable: uncomment and tune multipliers in temporal-index.ts
+  // ── Temporal boost (E2) — date-aware scoring ──
+  try {
+    const temporalQuery = detectTemporalQuery(query);
+    if (temporalQuery.type) {
+      const candidateIds = candidates.map(c => c.id);
+      const boosts = temporalBoost(db, temporalQuery, candidateIds);
+      for (const c of candidates) {
+        const boost = boosts.get(c.id);
+        if (boost) c.score *= boost;
+      }
+      // Re-sort after temporal boost
+      candidates.sort((a, b) => b.score - a.score);
+    }
+  } catch { /* temporal index unavailable — skip */ }
 
-  // ── Pass 2: Void marking (Phase 2 algorithm) ──
-  // Minimum 6 candidates before void marking activates
-  // Below that, every result is likely relevant — voiding would hurt more than help
-  const MIN_VOID_CANDIDATES = 6;
+  // ── Pass 2: Void marking with CNI-gated Active Power Filter ──
+  // Context Noise Index (CNI) measures score distribution entropy.
+  // Clean data (low CNI < 0.20) → bypass voiding entirely.
+  // Noisy data (high CNI > 0.20) → engage voiding with scaled penalty.
+  // Designed by Gavin using Active Power Filter principles from electrical engineering.
+  // Calibrated for TF-IDF score distributions (wider range than embedding cosine)
+  const NOISE_GATE = 0.50;  // Higher gate for TF-IDF — scores are more variable
+  const MAX_EXPECTED_CV = 1.5;  // TF-IDF CV is much higher than embedding CV
   const voidedZones: string[] = [];
   const voidZoneCounts = new Map<string, number>();
   let voidCount = 0;
 
-  if (totalScored >= MIN_VOID_CANDIDATES) {
+  // Calculate Context Noise Index from score distribution
+  const preScores = candidates.map(c => c.score);
+  let cni = 0;
+  let skipVoiding = false;
+
+  if (preScores.length < 4) {
+    skipVoiding = true; // Too few candidates to measure noise
+    cni = 0;
+  } else {
+    const mean = preScores.reduce((a, b) => a + b, 0) / preScores.length;
+    if (mean === 0) {
+      cni = 1.0;
+    } else {
+      const variance = preScores.reduce((sum, s) => sum + (s - mean) ** 2, 0) / preScores.length;
+      const stdDev = Math.sqrt(variance);
+      const cv = stdDev / mean;
+      // High CV = sharp signal (clean). Low CV = flat plateau (noisy).
+      // Invert: CNI 0 = clean, CNI 1 = noisy.
+      cni = Math.max(0, 1 - Math.min(cv / MAX_EXPECTED_CV, 1));
+    }
+    // Apply noise gate: if CNI below threshold, bypass voiding
+    skipVoiding = cni < NOISE_GATE;
+  }
+
+  if (!skipVoiding) {
     // Step 1: Cluster blocks by multi-keyword Jaccard similarity
     const clusterLabels = clusterBlocks(candidates);
     for (const c of candidates) {

@@ -7,7 +7,7 @@
 const Database = require('better-sqlite3');
 const { join } = require('path');
 
-const OLLAMA_URL = 'http://192.168.1.202:11434';
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const EMBED_MODEL = 'nomic-embed-text';
 const EMBED_DIM = 768;
 

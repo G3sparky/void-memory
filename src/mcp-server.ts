@@ -4,13 +4,25 @@
  * Runs on stdio for Claude Code MCP integration
  */
 
+import { join } from 'path';
 import { openDB } from './db.js';
 import { recall, store, stats, voidZones, type RecallResult, type MemoryStats } from './engine.js';
 import { scoreMessage, processMessage, getRecentThoughts, getUnstoredThoughts, generateSessionSummary, clearThoughts } from './inner-voice.js';
 import { runSelfTest } from './self-test.js';
 import { dream, storeDreamInsights } from './dream.js';
 
-const db = openDB();
+// Agent-scoped database: VOID_AGENT env var selects which DB to use
+// Set in each agent's Claude Code MCP config: VOID_AGENT=tron, VOID_AGENT=flynn, etc.
+const VOID_AGENT = process.env.VOID_AGENT || 'arch';
+const DATA_DIR = process.env.VOID_DATA_DIR || join(import.meta.dirname, '..', 'data');
+
+function getAgentDbPath(agent: string): string | undefined {
+  if (agent === 'arch') return undefined; // default path
+  return join(DATA_DIR, agent, 'void-memory.db');
+}
+
+const db = openDB(getAgentDbPath(VOID_AGENT));
+console.error(`[void-memory] Agent: ${VOID_AGENT}, DB: ${getAgentDbPath(VOID_AGENT) || 'default (arch)'}`);
 
 // ── MCP Protocol (stdio JSON-RPC) ──
 

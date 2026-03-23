@@ -2,7 +2,7 @@
  * Void Memory Dashboard — HTTP API + static file server.
  * Serves the dashboard UI and provides JSON API for memory stats, recall, and block exploration.
  *
- * Usage: VOID_DATA_DIR=/opt/void-memory/data node dist/dashboard.js [port]
+ * Usage: VOID_DATA_DIR=./data node dist/dashboard.js [port]
  * Default port: 3410
  */
 
@@ -16,7 +16,18 @@ import { scanContradictions } from "./contradiction-detector.js";
 
 const PORT = parseInt(process.argv[2] || '3410');
 const PUBLIC_DIR = join(import.meta.url.replace('file://', '').replace('/dist/dashboard.js', '').replace('/src/dashboard.ts', ''), 'public');
+const DATA_DIR = process.env.VOID_DATA_DIR || '/opt/void-memory/data';
 const db = openDB();
+
+// Agent-scoped DB paths
+function getAgentDbPath(agent: string): string {
+  const agentPaths: Record<string, string> = {
+    'tron': join(DATA_DIR, 'tron', 'void-memory.db'),
+    'arch': join(DATA_DIR, 'void-memory.db'),
+    'flynn': join(DATA_DIR, 'flynn', 'void-memory.db'),
+  };
+  return agentPaths[agent] || join(DATA_DIR, 'void-memory.db');
+}
 
 interface BlockRow {
   id: number;
@@ -74,7 +85,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
 
   if (path === '/api/recall' && req.method === 'POST') {
     const body = JSON.parse(await parseBody(req));
-    const result = await recall(db, body.query, body.budget);
+    // Agent-scoped recall: use the agent's own DB, not the default
+    const agentDb = body.agent ? openDB(getAgentDbPath(body.agent)) : db;
+    const result = await recall(agentDb, body.query, body.budget);
+    if (body.agent && agentDb !== db) agentDb.close();
     json(res, {
       blocks: result.blocks,
       void_zones: result.void_zones,
@@ -85,6 +99,31 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       blocks_voided: result.blocks_voided,
       duration_ms: result.duration_ms,
     });
+    return;
+  }
+
+  if (path === '/api/store' && req.method === 'POST') {
+    const body = JSON.parse(await parseBody(req));
+    if (!body.content || !body.keywords) {
+      json(res, { error: 'Required: content (string), keywords (string[])' }, 400);
+      return;
+    }
+    const agentDb = body.agent ? openDB(getAgentDbPath(body.agent)) : db;
+    try {
+      const result = store(agentDb, {
+        content: body.content,
+        category: body.category || 'fact',
+        keywords: Array.isArray(body.keywords) ? body.keywords : [body.keywords],
+        state: body.state,
+        confidence: body.confidence,
+        supersedes: body.supersedes,
+      });
+      json(res, result);
+    } catch (err: any) {
+      json(res, { error: err.message }, 400);
+    } finally {
+      if (body.agent && agentDb !== db) agentDb.close();
+    }
     return;
   }
 
