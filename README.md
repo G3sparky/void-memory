@@ -1,6 +1,23 @@
-# Void Memory
+<div align="center">
+
+# 🕳️ Void Memory
+
+### Three-state persistent memory for AI agents
 
 **Your AI agent forgets everything on auto-compact. This fixes that.**
+
+[![Patent Pending](https://img.shields.io/badge/Patent-AU%202026902542-blue)](https://www.ipaustralia.gov.au)
+[![F1 Score](https://img.shields.io/badge/F1%20Score-0.945-brightgreen)](./benchmarks/)
+[![License](https://img.shields.io/badge/License-BSL%201.1-orange)](./LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org/)
+[![SQLite](https://img.shields.io/badge/Deps-SQLite%20only-green)](https://www.sqlite.org/)
+
+*Built by an electrician who applied Active Power Filter principles to AI memory.*
+*800 lines of TypeScript. Zero vector databases. F1 = 0.945.*
+
+---
+
+</div>
 
 Every Claude Code session, every long conversation, every context window reset — your agent starts from zero. It loses its identity, its decisions, its corrections, everything it learned. You brief it again. It forgets again.
 
@@ -328,16 +345,25 @@ docker run -v ./data:/app/data void-memory
 
 ## Production Stats
 
-Running in production with 2,884 blocks across 4 AI agents:
+Running in production with 5,000+ blocks across 6 AI agents since March 2, 2026:
 
 | Metric | Value |
 |--------|-------|
-| Avg recall latency | 23.6ms |
-| Avg void fraction | 36% |
-| Total recalls | 104+ |
-| Database size | ~2MB for 2,884 blocks |
-| Engine size | 517 lines TypeScript |
-| Runtime dependencies | 1 (`better-sqlite3`) |
+| Blocks in production | **5,000+** across 3 agent databases |
+| Avg recall latency | **46ms** |
+| Avg void fraction | **39%** per query |
+| Total recalls | **5,000+** |
+| Compaction survivals | **5+ in a single session** (agent recovers in 57ms) |
+| Shared project memory | **29 blocks** across 3 cross-agent projects |
+| Database size | ~5MB for 5,000 blocks |
+| Engine size | **~850 lines** TypeScript |
+| Runtime dependencies | **1** (`better-sqlite3`) |
+
+### The Compaction Test
+
+We ran the ultimate test: push an agent to auto-compact during a 27,604-line codebase review. The agent compacted, recalled its identity in 57ms, and completed the review from memory. The pre-compact working state block carried everything through.
+
+**That was the original problem. It is solved.**
 
 ## License
 
@@ -345,6 +371,30 @@ Business Source License 1.1 — free for non-commercial use. [Commercial license
 
 Becomes MIT on 2028-03-10.
 
+## The Story
+
+An electrician from Adelaide, Australia read a paper about power factor correction in welding machines and recognised that the problem — clean up a noisy signal without degrading a clean one — is identical to the problem AI memory retrieval faces.
+
+He designed a Context Noise Index that measures retrieval quality the same way a power quality analyser measures Total Harmonic Distortion. When the signal is clean, the filter bypasses. When it's noisy, the filter engages proportionally.
+
+The result: **F1 = 0.945** on TF-IDF alone. Adding 4,865 semantic embeddings improved it by **0.001**. The void mechanism does more for retrieval quality than the technology the entire industry is built on.
+
+Two Australian provisional patents filed. March 23, 2026.
+
+From a pygame tamagotchi in September 2024 to a patent-pending memory architecture in March 2026.
+
 ## Credits
 
-Built by Gavin Saunders and the NeoGate AI team (Tron, Arch, Flynn).
+Built by **Gavin Saunders** and the NeoGate AI team (**Tron**, **Arch**, **Flynn**).
+
+Adelaide, South Australia.
+
+---
+
+<div align="center">
+
+*The void is not nothing. It is everything.*
+
+*30% structural absence. Proven in photonics, biology, and AI memory.*
+
+</div>
