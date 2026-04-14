@@ -13,6 +13,8 @@ import { openDB } from './db.js';
 import { recall, store, stats, voidZones, verifyResponse, type RecallResult } from './engine.js';
 import { temporalStats, backfillTemporalIndex } from "./temporal-index.js";
 import { scanContradictions } from "./contradiction-detector.js";
+import { drive_report, goal_stack, goal_current, motivation_process } from './motivation.js';
+import { getRecentThoughts } from './inner-voice.js';
 
 const PORT = parseInt(process.argv[2] || '3410');
 const PUBLIC_DIR = join(import.meta.url.replace('file://', '').replace('/dist/dashboard.js', '').replace('/src/dashboard.ts', ''), 'public');

@@ -369,7 +369,44 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
   const queryTokens = expandWithCooccurrence(synExpanded, allBlocks, 3);
   const idf = computeIDF(allBlocks);
 
-  let candidates: Candidate[] = allBlocks.map(b => ({
+  // Candidate pre-filter: a cheap String.includes pass reduces the working set
+  // to blocks that have at least one query-token substring in keywords/content.
+  // scoreBlock is expensive (re-tokenizes each block twice); running it on all
+  // ~5K active blocks took 4.3s after Phase 3's observed-tier unstranding.
+  // The pre-filter is ~50x faster and conservative: it may over-include (false
+  // positives get score=0 and drop at the filter at line ~466) but never
+  // under-includes. Metadata-boosted blocks bypass the filter so exact-number
+  // matches still survive even without keyword overlap.
+  const queryTokenArr = Array.from(new Set(queryTokens.filter(t => t.length > 0)));
+  const prefilterStart = performance.now();
+  const keepIds = new Set<number>(metadataBoosts.keys());
+  // Two-stage pre-filter:
+  //  Stage A — substring match: count how many distinct query tokens each block
+  //    has as a substring in its keywords+content. ~20x cheaper than scoreBlock.
+  //  Stage B — top-K by hit count: keep only the PREFILTER_TOP_K best-hit
+  //    candidates (plus all metadata-boosted blocks unconditionally). This
+  //    bounds scoreBlock's cost to a constant regardless of corpus size.
+  // Combined with the existing MAX_CANDIDATES=100 final cut, this keeps
+  // recall latency O(corpus × fast) + O(K × scoreBlock) instead of
+  // O(corpus × scoreBlock).
+  const PREFILTER_TOP_K = 300;
+  type HitRecord = { block: Block; hits: number };
+  const hitRecords: HitRecord[] = [];
+  for (const b of allBlocks) {
+    if (keepIds.has(b.id)) { hitRecords.push({ block: b, hits: Number.MAX_SAFE_INTEGER }); continue; }
+    const hay = (b.keywords + ' ' + b.content).toLowerCase();
+    let hits = 0;
+    for (let i = 0; i < queryTokenArr.length; i++) {
+      if (hay.includes(queryTokenArr[i])) hits++;
+    }
+    if (hits > 0) hitRecords.push({ block: b, hits });
+  }
+  // Sort by hit count desc, take top K
+  hitRecords.sort((a, b) => b.hits - a.hits);
+  const prefiltered: Block[] = hitRecords.slice(0, PREFILTER_TOP_K).map(r => r.block);
+  console.log(`[PREFILTER] ${allBlocks.length} -> ${hitRecords.length} -> ${prefiltered.length} (top-K) in ${(performance.now()-prefilterStart).toFixed(1)}ms`);
+
+  let candidates: Candidate[] = prefiltered.map(b => ({
     ...b,
     score: scoreBlock(b, queryTokens, idf, originalTokenSet),
     topic_cluster: b.keywords.split(',')[0]?.trim() || b.category,
@@ -422,7 +459,24 @@ export async function recall(db: Database.Database, query: string, budgetTokens?
   // A block with 0 keyword score but high cosine is NOT relevant — the cosine
   // is matching on general topic similarity, not the specific query.
   // Multiplicative boost: high cosine amplifies good keyword matches.
+  //
+  // Keyword-strength gate: semantic search hits Ollama at ~3s per query and
+  // is pure dead weight when the keyword pre-filter already found strong
+  // candidates. Gate: skip semantic if the top candidate hit ≥ half the
+  // query tokens OR we have ≥ 10 candidates with score above a threshold.
+  // Wave mode (broader nets) still runs semantic regardless.
+  const topHits = hitRecords.length > 0 ? hitRecords[0].hits : 0;
+  const strongCandidates = candidates.filter(c => c.score > 1).length;
+  const queryTokenCount = queryTokenArr.length;
+  const keywordStrong = (
+    mode === 'particle' &&
+    (topHits >= Math.max(2, Math.ceil(queryTokenCount / 2)) || strongCandidates >= 10)
+  );
+  if (keywordStrong) {
+    console.log(`[SEMANTIC] skipped — keyword signal strong (topHits=${topHits}, strong=${strongCandidates})`);
+  }
   try {
+    if (keywordStrong) throw new Error('keyword-gate-skip');
     const { semanticSearch: semSearch } = await import('./semantic.js');
     const semanticResults = await semSearch(query);
     if (semanticResults.length > 0) {
