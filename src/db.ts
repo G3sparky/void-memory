@@ -7,6 +7,9 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { mkdirSync } from 'fs';
 import { migrateTemporalIndex } from "./temporal-index.js";
+import { migrateValence } from "./valence.js";
+import { migrateCandidatePairs } from "./candidate-pairs.js";
+import { migrateContinuity } from "./continuity.js";
 
 const DATA_DIR = process.env.VOID_DATA_DIR || join(import.meta.dirname, '..', 'data');
 
@@ -21,6 +24,8 @@ export interface Block {
   created_at: string;
   accessed_at: string | null;
   supersedes: number | null;  // id of block this one replaces
+  net_valence: number;    // -1 to +1, emotional tag from Papez circuit
+  storage_tier: string;   // hot, warm, cold — Kruse tiered storage
 }
 
 export interface RecallEntry {
@@ -43,6 +48,10 @@ export function openDB(path?: string): Database.Database {
   db.pragma('foreign_keys = ON');
   migrate(db);
   migrateTemporalIndex(db);
+  migrateValence(db);
+  migrateCandidatePairs(db);
+  migrateContinuity(db);
+  migrateCoherentDomains(db);
   return db;
 }
 
@@ -87,5 +96,55 @@ function migrate(db: Database.Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (blocker_id, blocked_id)
     );
+  `);
+}
+
+/**
+ * Migrate: add co_recalls and coherent_domains tables
+ * Co-recalls track which blocks are recalled together (builds co-occurrence graph).
+ * Coherent domains group frequently co-recalled blocks into semantic clusters.
+ */
+function migrateCoherentDomains(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS co_recalls (
+      block_a INTEGER NOT NULL,
+      block_b INTEGER NOT NULL,
+      co_count INTEGER NOT NULL DEFAULT 1,
+      last_co_recall TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (block_a, block_b)
+    );
+
+    CREATE TABLE IF NOT EXISTS coherent_domains (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      block_count INTEGER NOT NULL DEFAULT 0,
+      total_co_recall_strength INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS domain_members (
+      domain_id INTEGER NOT NULL REFERENCES coherent_domains(id),
+      block_id INTEGER NOT NULL,
+      joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (domain_id, block_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_co_recalls_count ON co_recalls(co_count DESC);
+    CREATE INDEX IF NOT EXISTS idx_domain_members_block ON domain_members(block_id);
+  `);
+
+  // Add tool_calls table for motivation tracking
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      called_at TEXT NOT NULL DEFAULT (datetime('now')),
+      duration_ms REAL,
+      success INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX IF NOT EXISTS idx_tool_calls_agent ON tool_calls(agent, tool_name);
   `);
 }

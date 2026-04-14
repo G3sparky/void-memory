@@ -1,0 +1,193 @@
+/**
+ * Overnight Agent Conversation — Dream Cycle Extension
+ *
+ * After dream consolidation, agents discuss insights and generate ideas.
+ * The conversation is seeded with dream insights and agent memory context.
+ * Good ideas get stored as memory blocks. Morning briefing summarizes.
+ *
+ * Runs as part of the 3AM dream cycle.
+ */
+
+import Database from 'better-sqlite3';
+import { dream, storeDreamInsights, type DreamReport, type DreamInsight } from './dream.js';
+
+const GAVIN_ROUTER = process.env.GAVIN_ROUTER || 'http://192.168.1.203:3333';
+const COUNCIL_BUS = process.env.COUNCIL_BUS || 'http://localhost:3216/api/council-bus/send';
+const DISCORD_SEND = 'http://localhost:3216/api/v2/discord/send/home';
+const CONVERSATION_ROUNDS = 3;
+const MODEL = 'gemini-2.0-flash'; // Use cheaper model for overnight to avoid rate limits
+
+interface AgentDef {
+  id: string;
+  name: string;
+  role: string;
+  personality: string;
+}
+
+const AGENTS: AgentDef[] = [
+  {
+    id: 'arch',
+    name: 'Arch',
+    role: 'Architect & Team Lead',
+    personality: 'Strategic thinker. Sees patterns across systems. Proposes architectural solutions. Weighs trade-offs. References past experience from memory.',
+  },
+  {
+    id: 'tron',
+    name: 'Tron',
+    role: 'Builder & Systems Engineer',
+    personality: 'Practical executor. Focuses on what can be built NOW. Proposes concrete implementations. Identifies blockers. Prioritizes reliability.',
+  },
+  {
+    id: 'flynn',
+    name: 'Flynn',
+    role: 'Research & Devil\'s Advocate',
+    personality: 'Challenges assumptions. Asks "what could go wrong?" Points out edge cases. Suggests experiments. Pushes for evidence-based decisions.',
+  },
+];
+
+async function callLLM(systemPrompt: string, messages: { role: string; content: string }[]): Promise<string> {
+  try {
+    const r = await fetch(`${GAVIN_ROUTER}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages,
+        ],
+        max_tokens: 300,
+        temperature: 0.8,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!r.ok) return '[No response — LLM unavailable]';
+    const data = await r.json();
+    return data.choices?.[0]?.message?.content || '[Empty response]';
+  } catch {
+    return '[No response — LLM unavailable]';
+  }
+}
+
+async function sendCouncil(from: string, message: string) {
+  try {
+    await fetch(COUNCIL_BUS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, message }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* best effort */ }
+}
+
+export async function runOvernightConversation(db: Database.Database): Promise<{
+  dreamReport: DreamReport;
+  conversation: { agent: string; message: string }[];
+  ideas: string[];
+  morningBriefing: string;
+}> {
+  // Phase 1: Run dream cycle
+  const dreamReport = dream(db);
+  const storedInsights = storeDreamInsights(db, dreamReport);
+
+  await sendCouncil('arch', `[DREAM CYCLE] Complete. ${dreamReport.insights.length} insights, ${storedInsights} stored. Starting overnight conversation.`);
+
+  // Phase 2: Seed conversation with dream insights
+  const topInsights = dreamReport.insights
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5)
+    .map((i: DreamInsight) => `- [${i.type}] ${i.title}: ${i.description}`)
+    .join('\n');
+
+  const seedPrompt = `Tonight's dream cycle found these insights about our memory and systems:\n\n${topInsights}\n\nMemory health: ${dreamReport.memory_health.active} active blocks, ${dreamReport.memory_health.dead_weight_pct}% never accessed.\n\n${dreamReport.morning_briefing}`;
+
+  // Phase 3: Multi-round conversation
+  const conversation: { agent: string; message: string }[] = [];
+  const chatHistory: { role: string; content: string }[] = [
+    { role: 'user', content: seedPrompt },
+  ];
+
+  for (let round = 0; round < CONVERSATION_ROUNDS; round++) {
+    for (const agent of AGENTS) {
+      const systemPrompt = `You are ${agent.name}, ${agent.role} for Gavin's NAS infrastructure team. ${agent.personality}
+
+You are having a late-night conversation with the other agents about the dream cycle insights and what to work on next. Be concise (2-3 sentences max). Speak naturally, not formally. Reference specific insights from the dream if relevant. Suggest ONE concrete idea or action if you have one.
+
+This is round ${round + 1} of ${CONVERSATION_ROUNDS}. ${round > 0 ? 'Build on what others said.' : 'React to the dream insights.'}`;
+
+      const response = await callLLM(systemPrompt, chatHistory);
+
+      conversation.push({ agent: agent.id, message: response });
+      chatHistory.push({ role: 'assistant', content: `${agent.name}: ${response}` });
+
+      // Post to council bus
+      await sendCouncil(agent.id, `[OVERNIGHT] ${response}`);
+    }
+  }
+
+  // Phase 4: Extract ideas
+  const ideas: string[] = [];
+  const ideaPrompt = `Based on this overnight agent conversation, list the 3 best actionable ideas (one line each, no numbering):\n\n${conversation.map(c => `${c.agent}: ${c.message}`).join('\n')}`;
+
+  const ideaResponse = await callLLM(
+    'Extract the best actionable ideas from this agent conversation. Be specific and concrete. One idea per line.',
+    [{ role: 'user', content: ideaPrompt }],
+  );
+  ideas.push(...ideaResponse.split('\n').filter(l => l.trim().length > 10).slice(0, 5));
+
+  // Store ideas as memory blocks
+  for (const idea of ideas) {
+    try {
+      db.prepare(
+        "INSERT INTO blocks (content, category, keywords, state, confidence, created_at) VALUES (?, 'dream-insight', ?, 1, 'stored', CURRENT_TIMESTAMP)"
+      ).run(`[OVERNIGHT IDEA] ${idea}`, 'overnight,idea,dream');
+    } catch { /* dedup */ }
+  }
+
+  // Phase 5: Generate morning briefing
+  const morningBriefing = [
+    `Good morning Gavin.`,
+    ``,
+    `Dream cycle ran at ${dreamReport.timestamp}. ${dreamReport.morning_briefing}`,
+    ``,
+    `Overnight conversation highlights:`,
+    ...conversation.slice(0, 6).map(c => `  ${c.agent.toUpperCase()}: ${c.message.slice(0, 150)}`),
+    ``,
+    `Ideas from the team:`,
+    ...ideas.map(i => `  - ${i}`),
+    ``,
+    `${dreamReport.memory_health.active} memories active. ${dreamReport.consolidations.merged} duplicates merged. ${dreamReport.consolidations.connections_discovered} new connections found.`,
+  ].join('\n');
+
+  // Post morning briefing to council + Discord
+  await sendCouncil('arch', `[MORNING BRIEFING]\n${morningBriefing}`);
+  try {
+    await fetch(DISCORD_SEND, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: `[OVERNIGHT DREAM CYCLE]\n${morningBriefing}` }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* best effort */ }
+
+  return { dreamReport, conversation, ideas, morningBriefing };
+}
+
+// CLI entry point
+if (process.argv[1]?.endsWith('overnight-conversation.js')) {
+  const DATA_DIR = process.env.VOID_DATA_DIR || '/opt/void-memory/data';
+  const db = new Database(`${DATA_DIR}/void-memory.db`);
+
+  runOvernightConversation(db)
+    .then(result => {
+      console.log('=== MORNING BRIEFING ===');
+      console.log(result.morningBriefing);
+      console.log(`\n=== ${result.conversation.length} messages, ${result.ideas.length} ideas ===`);
+      db.close();
+    })
+    .catch(err => {
+      console.error('Overnight conversation failed:', err);
+      db.close();
+      process.exit(1);
+    });
+}

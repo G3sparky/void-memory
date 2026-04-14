@@ -16,6 +16,7 @@ const EMBED_MODEL = 'nomic-embed-text';
 const SEMANTIC_DBS = [
   '/opt/void-memory/data/semantic-arch.db',
   '/opt/void-memory/data/tron/semantic-tron.db',
+  '/opt/void-memory/data/flynn/semantic-flynn.db',
 ];
 
 import { existsSync } from 'fs';

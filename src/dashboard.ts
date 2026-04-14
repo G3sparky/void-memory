@@ -10,7 +10,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { openDB } from './db.js';
-import { recall, store, stats, voidZones, type RecallResult } from './engine.js';
+import { recall, store, stats, voidZones, verifyResponse, type RecallResult } from './engine.js';
 import { temporalStats, backfillTemporalIndex } from "./temporal-index.js";
 import { scanContradictions } from "./contradiction-detector.js";
 
@@ -25,8 +25,9 @@ function getAgentDbPath(agent: string): string {
     'tron': join(DATA_DIR, 'tron', 'void-memory.db'),
     'arch': join(DATA_DIR, 'void-memory.db'),
     'flynn': join(DATA_DIR, 'flynn', 'void-memory.db'),
+    'lauren': join(DATA_DIR, 'lauren', 'void-memory.db'),
   };
-  return agentPaths[agent] || join(DATA_DIR, 'void-memory.db');
+  return agentPaths[agent] || join(DATA_DIR, agent, 'void-memory.db');
 }
 
 interface BlockRow {
@@ -97,6 +98,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       budget_max: result.budget_max,
       blocks_scored: result.blocks_scored,
       blocks_voided: result.blocks_voided,
+      coverage_ratio: result.coverage_ratio,
       duration_ms: result.duration_ms,
     });
     return;
@@ -118,6 +120,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         confidence: body.confidence,
         supersedes: body.supersedes,
       });
+      json(res, result);
+    } catch (err: any) {
+      json(res, { error: err.message }, 400);
+    } finally {
+      if (body.agent && agentDb !== db) agentDb.close();
+    }
+    return;
+  }
+
+  if (path === '/api/verify' && req.method === 'POST') {
+    const body = JSON.parse(await parseBody(req));
+    if (!body.response) {
+      json(res, { error: 'Required: response (string)' }, 400);
+      return;
+    }
+    const agentDb = body.agent ? openDB(getAgentDbPath(body.agent)) : db;
+    try {
+      const result = await verifyResponse(agentDb, body.response);
       json(res, result);
     } catch (err: any) {
       json(res, { error: err.message }, 400);
